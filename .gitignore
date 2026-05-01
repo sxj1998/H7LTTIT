@@ -1,0 +1,40 @@
+# Keil MDK build outputs
+*.axf
+*.bin
+*.crf
+*.d
+*.dep
+*.elf
+*.hex
+*.htm
+*.iex
+*.lnp
+*.map
+*.o
+*.obj
+*.out
+*.sct
+*.lst
+*.build_log.htm
+
+# Keil user/local files
+*.uvguix.*
+*.uvoptx
+*.bak
+*.tmp
+
+# CubeMX / local scripts
+cubemx_test.txt
+
+# VS Code local workspace settings
+.vscode/
+
+# J-Link logs
+JLinkLog.txt
+JLinkSettings.ini
+
+# Keil debug/cache directories
+H7Lttit/MDK-ARM/DebugConfig/
+
+# Build output directories
+H7Lttit/MDK-ARM/H7Lttit/

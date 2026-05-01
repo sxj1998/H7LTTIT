@@ -1,0 +1,9 @@
+device STM32H750VB
+si SWD
+speed 4000
+r
+h
+loadfile F:\CODE_STUDY\MCU\H7Lttit\H7Lttit\MDK-ARM\H7Lttit\H7Lttit.hex
+r
+g
+qc
