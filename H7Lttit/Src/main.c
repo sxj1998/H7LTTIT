@@ -4,8 +4,11 @@
 #include "rtc.h"
 #include "spi.h"
 #include "tim.h"
+#include "usb_device.h"
+#include "usb_rndis_lwip.h"
 
 #include <stdio.h>
+#include <string.h>
 
 static const uint32_t kUartBaudrate = 115200U;
 
@@ -43,17 +46,23 @@ int main(void)
   MX_TIM1_Init();
 
   USART1_Init();
+  HAL_PWREx_EnableUSBVoltageDetector();
+  MX_USB_DEVICE_Init();
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
 
   printf("H7Lttit basic framework started\r\n");
-  printf("Peripherals: GPIO, USART1, SPI4, TIM1 PWM, RTC stub\r\n");
+  printf("Peripherals: GPIO, USART1, USB RNDIS + LwIP, SPI4, TIM1 PWM, RTC stub\r\n");
+  printf("RNDIS static IP: 192.168.7.1/24, MAC: 02:12:34:56:78:9A\r\n");
 
   while (1)
   {
     HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-    printf("tick=%lu key=%u\r\n",
+    USB_RNDIS_LWIP_Poll();
+    printf("tick=%lu key=%u rndis_rx=%lu rndis_tx=%lu\r\n",
            (unsigned long)HAL_GetTick(),
-           (unsigned)HAL_GPIO_ReadPin(KEY_GPIO_Port, KEY_Pin));
+           (unsigned)HAL_GPIO_ReadPin(KEY_GPIO_Port, KEY_Pin),
+           (unsigned long)USB_RNDIS_LWIP_GetRxCount(),
+           (unsigned long)USB_RNDIS_LWIP_GetTxCount());
     HAL_Delay(1000U);
   }
 }
@@ -62,6 +71,7 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
 
   HAL_PWREx_ConfigSupply(PWR_LDO_SUPPLY);
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
@@ -82,12 +92,19 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLM = 5;
   RCC_OscInitStruct.PLL.PLLN = 96;
   RCC_OscInitStruct.PLL.PLLP = 2;
-  RCC_OscInitStruct.PLL.PLLQ = 2;
+  RCC_OscInitStruct.PLL.PLLQ = 10;
   RCC_OscInitStruct.PLL.PLLR = 2;
   RCC_OscInitStruct.PLL.PLLRGE = RCC_PLL1VCIRANGE_2;
   RCC_OscInitStruct.PLL.PLLVCOSEL = RCC_PLL1VCOWIDE;
   RCC_OscInitStruct.PLL.PLLFRACN = 0;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_USB;
+  PeriphClkInitStruct.UsbClockSelection = RCC_USBCLKSOURCE_PLL;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
   {
     Error_Handler();
   }
