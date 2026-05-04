@@ -1,16 +1,21 @@
 #include "main.h"
+#include "comm.h"
 #include "debug.h"
+#include "fs_port.h"
 #include "gpio.h"
+#include "heap.h"
 #include "lcd.h"
 #include "littlefs_flash.h"
 #include "littlefs_sd.h"
 #include "quadspi.h"
 #include "rtc.h"
 #include "sdmmc.h"
+#include "shell.h"
 #include "spi.h"
 #include "tim.h"
 #include "usb_device.h"
 #include "usb_rndis_lwip.h"
+#include "vfs_port.h"
 #include "w25qxx_qspi.h"
 
 #include "FreeRTOS.h"
@@ -22,7 +27,8 @@
 static const uint32_t kUartBaudrate = 115200U;
 #define ENABLE_STRESS_TEST 0U
 #define ENABLE_PERIODIC_STATUS_PRINT 0U
-#define ENABLE_LITTLEFS_STRESS_TEST 1U
+#define ENABLE_LITTLEFS_STRESS_TEST 0U
+#define ENABLE_SERIAL_SHELL 1U
 #define LITTLEFS_STRESS_MAX_ITERATIONS 200U
 #define LITTLEFS_STRESS_REPORT_INTERVAL 10U
 #define LITTLEFS_STRESS_DATA_SIZE 512U
@@ -32,23 +38,36 @@ static void CPU_CACHE_Enable(void);
 static void USART1_Init(void);
 static void USART1_WriteChar(uint8_t ch);
 static void StartDefaultTask(void *argument);
+#if (ENABLE_SERIAL_SHELL != 0U)
+static void StartShellTask(void *argument);
+#endif
 #if (ENABLE_STRESS_TEST != 0U)
 static void StartStressTask(void *argument);
 #endif
 static void StartBoardPeripheralsTask(void *argument);
 static void BoardLcdShowLine(uint16_t y, const char *text);
+#if (ENABLE_SERIAL_SHELL == 0U)
 static void BoardLcdShowResources(void);
+#endif
 static void BoardFlashTest(void);
 static void BoardLittleFsTest(void);
 static void BoardSdLittleFsTest(void);
+#if (ENABLE_LITTLEFS_STRESS_TEST != 0U)
 static void BoardLittleFsStressTest(void);
 static int BoardLittleFsWriteVerify(lfs_t *fs, const char *path, uint32_t iteration);
+#endif
 
 void SystemClock_Config(void);
 
 static uint8_t s_board_flash_sample[16];
+#if (ENABLE_LITTLEFS_STRESS_TEST != 0U)
 static uint8_t s_lfs_stress_write[LITTLEFS_STRESS_DATA_SIZE];
 static uint8_t s_lfs_stress_read[LITTLEFS_STRESS_DATA_SIZE];
+#endif
+#if (ENABLE_SERIAL_SHELL != 0U)
+static struct superblock s_shell_fs_sb;
+static volatile uint8_t s_shell_ready;
+#endif
 
 extern uint8_t Image$$ER_IROM1$$Length[];
 extern uint8_t Image$$RW_IRAM2$$Length[];
@@ -80,6 +99,8 @@ int main(void)
   MX_TIM1_Init();
 
   USART1_Init();
+  heap_init();
+  comm_init_uart(NULL);
   HAL_PWREx_EnableUSBVoltageDetector();
   MX_USB_DEVICE_Init();
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
@@ -107,6 +128,18 @@ int main(void)
   {
     Error_Handler();
   }
+
+#if (ENABLE_SERIAL_SHELL != 0U)
+  if (xTaskCreate(StartShellTask,
+                  "shell",
+                  1024U,
+                  NULL,
+                  tskIDLE_PRIORITY + 1U,
+                  NULL) != pdPASS)
+  {
+    Error_Handler();
+  }
+#endif
 
 #if (ENABLE_STRESS_TEST != 0U)
   if (xTaskCreate(StartStressTask,
@@ -295,6 +328,24 @@ static void StartDefaultTask(void *argument)
   }
 }
 
+#if (ENABLE_SERIAL_SHELL != 0U)
+static void StartShellTask(void *argument)
+{
+  (void)argument;
+
+  while (s_shell_ready == 0U)
+  {
+    vTaskDelay(pdMS_TO_TICKS(20U));
+  }
+
+  while (1)
+  {
+    shell_poll();
+    vTaskDelay(pdMS_TO_TICKS(2U));
+  }
+}
+#endif
+
 #if (ENABLE_STRESS_TEST != 0U)
 static void StartStressTask(void *argument)
 {
@@ -357,6 +408,23 @@ static void StartBoardPeripheralsTask(void *argument)
   BoardSdLittleFsTest();
   BoardLittleFsTest();
 
+#if (ENABLE_SERIAL_SHELL != 0U)
+  fs_port_init();
+  if (fs_port_mount(&s_shell_fs_sb) == 0)
+  {
+    vfs_port_init();
+    shell_init();
+    s_shell_ready = 1U;
+    printf("shell ready: help | ls | cat | touch | write | mkdir | cd | vfs | vim\r\n");
+    BoardLcdShowLine(64U, "Shell ready");
+  }
+  else
+  {
+    printf("shell fs mount failed\r\n");
+    BoardLcdShowLine(64U, "Shell fs err");
+  }
+#endif
+
 #if (ENABLE_LITTLEFS_STRESS_TEST != 0U)
   BoardLittleFsStressTest();
 #endif
@@ -364,7 +432,11 @@ static void StartBoardPeripheralsTask(void *argument)
   while (1)
   {
     (void)line;
+#if (ENABLE_SERIAL_SHELL != 0U)
+    BoardLcdShowLine(80U, "UART shell COM3");
+#else
     BoardLcdShowResources();
+#endif
     vTaskDelay(pdMS_TO_TICKS(1000U));
   }
 }
@@ -375,6 +447,7 @@ static void BoardLcdShowLine(uint16_t y, const char *text)
   LCD_ShowString(0, y, ST7735Ctx.Width, 16, 16, (uint8_t *)text);
 }
 
+#if (ENABLE_SERIAL_SHELL == 0U)
 static void BoardLcdShowResources(void)
 {
   static const uint32_t kInternalFlashSize = 128UL * 1024UL;
@@ -443,6 +516,7 @@ static void BoardLcdShowResources(void)
   }
   BoardLcdShowLine(48U, line);
 }
+#endif
 
 static void BoardFlashTest(void)
 {
@@ -598,6 +672,7 @@ static void BoardSdLittleFsTest(void)
   BoardLcdShowLine(48U, line);
 }
 
+#if (ENABLE_LITTLEFS_STRESS_TEST != 0U)
 static void BoardLittleFsStressTest(void)
 {
   uint32_t iteration = 0U;
@@ -741,6 +816,7 @@ static int BoardLittleFsWriteVerify(lfs_t *fs, const char *path, uint32_t iterat
 
   return LFS_ERR_OK;
 }
+#endif
 
 void vApplicationMallocFailedHook(void)
 {
