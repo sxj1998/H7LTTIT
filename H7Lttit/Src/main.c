@@ -22,6 +22,10 @@
 static const uint32_t kUartBaudrate = 115200U;
 #define ENABLE_STRESS_TEST 0U
 #define ENABLE_PERIODIC_STATUS_PRINT 0U
+#define ENABLE_LITTLEFS_STRESS_TEST 1U
+#define LITTLEFS_STRESS_MAX_ITERATIONS 200U
+#define LITTLEFS_STRESS_REPORT_INTERVAL 10U
+#define LITTLEFS_STRESS_DATA_SIZE 512U
 
 static void MPU_Config(void);
 static void CPU_CACHE_Enable(void);
@@ -37,10 +41,14 @@ static void BoardLcdShowResources(void);
 static void BoardFlashTest(void);
 static void BoardLittleFsTest(void);
 static void BoardSdLittleFsTest(void);
+static void BoardLittleFsStressTest(void);
+static int BoardLittleFsWriteVerify(lfs_t *fs, const char *path, uint32_t iteration);
 
 void SystemClock_Config(void);
 
 static uint8_t s_board_flash_sample[16];
+static uint8_t s_lfs_stress_write[LITTLEFS_STRESS_DATA_SIZE];
+static uint8_t s_lfs_stress_read[LITTLEFS_STRESS_DATA_SIZE];
 
 extern uint8_t Image$$ER_IROM1$$Length[];
 extern uint8_t Image$$RW_IRAM2$$Length[];
@@ -92,7 +100,7 @@ int main(void)
 
   if (xTaskCreate(StartBoardPeripheralsTask,
                   "board_io",
-                  1024U,
+                  3072U,
                   NULL,
                   tskIDLE_PRIORITY + 1U,
                   NULL) != pdPASS)
@@ -349,6 +357,10 @@ static void StartBoardPeripheralsTask(void *argument)
   BoardSdLittleFsTest();
   BoardLittleFsTest();
 
+#if (ENABLE_LITTLEFS_STRESS_TEST != 0U)
+  BoardLittleFsStressTest();
+#endif
+
   while (1)
   {
     (void)line;
@@ -584,6 +596,150 @@ static void BoardSdLittleFsTest(void)
     sprintf(line, "SD LFS E%d", err);
   }
   BoardLcdShowLine(48U, line);
+}
+
+static void BoardLittleFsStressTest(void)
+{
+  uint32_t iteration = 0U;
+  TickType_t start_ticks = xTaskGetTickCount();
+  char line[32];
+
+  printf("littlefs stress: start data=%lu report=%lu\r\n",
+         (unsigned long)LITTLEFS_STRESS_DATA_SIZE,
+         (unsigned long)LITTLEFS_STRESS_REPORT_INTERVAL);
+  BoardLcdShowLine(64U, "LFS stress run");
+
+  while (1)
+  {
+    int flash_err;
+    int sd_err;
+
+    iteration++;
+
+    flash_err = LittleFs_FlashMount(1U);
+    if (flash_err == LFS_ERR_OK)
+    {
+      flash_err = BoardLittleFsWriteVerify(LittleFs_FlashGetHandle(),
+                                           "flash_stress.bin",
+                                           iteration);
+    }
+    LittleFs_FlashUnmount();
+
+    if (flash_err != LFS_ERR_OK)
+    {
+      printf("littlefs stress: flash failed iter=%lu err=%d\r\n",
+             (unsigned long)iteration,
+             flash_err);
+      sprintf(line, "F stress E%d", flash_err);
+      BoardLcdShowLine(64U, line);
+      break;
+    }
+
+    sd_err = LittleFs_SdMount(1U);
+    if (sd_err == LFS_ERR_OK)
+    {
+      sd_err = BoardLittleFsWriteVerify(LittleFs_SdGetHandle(),
+                                        "sd_stress.bin",
+                                        iteration);
+    }
+    LittleFs_SdUnmount();
+
+    if (sd_err != LFS_ERR_OK)
+    {
+      printf("littlefs stress: sd failed iter=%lu err=%d hal=0x%08lX\r\n",
+             (unsigned long)iteration,
+             sd_err,
+             (unsigned long)LittleFs_SdGetLastHalError());
+      sprintf(line, "SD stress E%d", sd_err);
+      BoardLcdShowLine(64U, line);
+      break;
+    }
+
+    if ((iteration % LITTLEFS_STRESS_REPORT_INTERVAL) == 0U)
+    {
+      uint32_t elapsed_ms = (uint32_t)((xTaskGetTickCount() - start_ticks) * portTICK_PERIOD_MS);
+
+      printf("littlefs stress: iter=%lu elapsed=%lums heap_free=%lu heap_min=%lu stack_min=%lu\r\n",
+             (unsigned long)iteration,
+             (unsigned long)elapsed_ms,
+             (unsigned long)xPortGetFreeHeapSize(),
+             (unsigned long)xPortGetMinimumEverFreeHeapSize(),
+             (unsigned long)uxTaskGetStackHighWaterMark(NULL));
+      sprintf(line, "LFS stress %lu", (unsigned long)iteration);
+      BoardLcdShowLine(64U, line);
+    }
+
+    if (iteration >= LITTLEFS_STRESS_MAX_ITERATIONS)
+    {
+      uint32_t elapsed_ms = (uint32_t)((xTaskGetTickCount() - start_ticks) * portTICK_PERIOD_MS);
+
+      printf("littlefs stress: PASS iter=%lu elapsed=%lums heap_free=%lu heap_min=%lu stack_min=%lu\r\n",
+             (unsigned long)iteration,
+             (unsigned long)elapsed_ms,
+             (unsigned long)xPortGetFreeHeapSize(),
+             (unsigned long)xPortGetMinimumEverFreeHeapSize(),
+             (unsigned long)uxTaskGetStackHighWaterMark(NULL));
+      sprintf(line, "LFS PASS %lu", (unsigned long)iteration);
+      BoardLcdShowLine(64U, line);
+      break;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(10U));
+  }
+
+  while (1)
+  {
+    vTaskDelay(pdMS_TO_TICKS(1000U));
+  }
+}
+
+static int BoardLittleFsWriteVerify(lfs_t *fs, const char *path, uint32_t iteration)
+{
+  lfs_file_t file;
+  int err;
+
+  for (uint32_t i = 0U; i < LITTLEFS_STRESS_DATA_SIZE; i++)
+  {
+    s_lfs_stress_write[i] = (uint8_t)(iteration + (i * 31U) + (i >> 3));
+    s_lfs_stress_read[i] = 0U;
+  }
+
+  err = lfs_file_open(fs, &file, path, LFS_O_RDWR | LFS_O_CREAT | LFS_O_TRUNC);
+  if (err != LFS_ERR_OK)
+  {
+    return err;
+  }
+
+  err = (int)lfs_file_write(fs, &file, s_lfs_stress_write, LITTLEFS_STRESS_DATA_SIZE);
+  if (err == (int)LITTLEFS_STRESS_DATA_SIZE)
+  {
+    err = lfs_file_sync(fs, &file);
+  }
+  lfs_file_close(fs, &file);
+  if (err != LFS_ERR_OK)
+  {
+    return (err > 0) ? LFS_ERR_IO : err;
+  }
+
+  err = lfs_file_open(fs, &file, path, LFS_O_RDONLY);
+  if (err != LFS_ERR_OK)
+  {
+    return err;
+  }
+
+  err = (int)lfs_file_read(fs, &file, s_lfs_stress_read, LITTLEFS_STRESS_DATA_SIZE);
+  lfs_file_close(fs, &file);
+  if (err != (int)LITTLEFS_STRESS_DATA_SIZE)
+  {
+    return (err >= 0) ? LFS_ERR_IO : err;
+  }
+
+  if (memcmp(s_lfs_stress_read, s_lfs_stress_write, LITTLEFS_STRESS_DATA_SIZE) != 0)
+  {
+    return LFS_ERR_CORRUPT;
+  }
+
+  return LFS_ERR_OK;
 }
 
 void vApplicationMallocFailedHook(void)
