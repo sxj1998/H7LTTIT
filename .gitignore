@@ -32,6 +32,7 @@ cubemx_test.txt
 # J-Link logs
 JLinkLog.txt
 JLinkSettings.ini
+H7Lttit/MDK-ARM/*.log
 
 # Keil debug/cache directories
 H7Lttit/MDK-ARM/DebugConfig/
