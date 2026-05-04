@@ -20,14 +20,17 @@
 #include <string.h>
 
 static const uint32_t kUartBaudrate = 115200U;
-#define ENABLE_STRESS_TEST 1U
+#define ENABLE_STRESS_TEST 0U
+#define ENABLE_PERIODIC_STATUS_PRINT 0U
 
 static void MPU_Config(void);
 static void CPU_CACHE_Enable(void);
 static void USART1_Init(void);
 static void USART1_WriteChar(uint8_t ch);
 static void StartDefaultTask(void *argument);
+#if (ENABLE_STRESS_TEST != 0U)
 static void StartStressTask(void *argument);
+#endif
 static void StartBoardPeripheralsTask(void *argument);
 static void BoardLcdShowLine(uint16_t y, const char *text);
 static void BoardLcdShowResources(void);
@@ -261,6 +264,7 @@ static void StartDefaultTask(void *argument)
   {
     USB_RNDIS_LWIP_Poll();
 
+#if (ENABLE_PERIODIC_STATUS_PRINT != 0U)
     if (++print_ticks >= 100U)
     {
       print_ticks = 0U;
@@ -271,11 +275,19 @@ static void StartDefaultTask(void *argument)
              (unsigned long)USB_RNDIS_LWIP_GetRxCount(),
              (unsigned long)USB_RNDIS_LWIP_GetTxCount());
     }
+#else
+    if (++print_ticks >= 100U)
+    {
+      print_ticks = 0U;
+      HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+    }
+#endif
 
     vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(10U));
   }
 }
 
+#if (ENABLE_STRESS_TEST != 0U)
 static void StartStressTask(void *argument)
 {
   static const size_t kAllocSizes[] = {32U, 64U, 128U, 256U, 512U};
@@ -320,6 +332,7 @@ static void StartStressTask(void *argument)
     vTaskDelay(pdMS_TO_TICKS(1U));
   }
 }
+#endif
 
 static void StartBoardPeripheralsTask(void *argument)
 {
@@ -333,8 +346,8 @@ static void StartBoardPeripheralsTask(void *argument)
   BoardLcdShowLine(16U, "RNDIS running");
 
   BoardFlashTest();
-  BoardLittleFsTest();
   BoardSdLittleFsTest();
+  BoardLittleFsTest();
 
   while (1)
   {
@@ -361,6 +374,7 @@ static void BoardLcdShowResources(void)
   uint32_t sd_total_kb = 0U;
   uint32_t sd_used_kb = 0U;
   uint32_t sd_used_percent = 0U;
+  int sd_err = LFS_ERR_OK;
   char line[32];
 
   sprintf(line,
@@ -384,16 +398,21 @@ static void BoardLcdShowResources(void)
           (unsigned long)((heap_used * 100UL) / (uint32_t)configTOTAL_HEAP_SIZE));
   BoardLcdShowLine(32U, line);
 
-  if (LittleFs_SdMount(0U) == LFS_ERR_OK)
+  sd_err = LittleFs_SdMount(0U);
+  if (sd_err == LFS_ERR_OK)
   {
     lfs_ssize_t used_blocks = lfs_fs_size(LittleFs_SdGetHandle());
     uint32_t total_blocks = LittleFs_SdGetBlockCount();
 
     if ((used_blocks >= 0) && (total_blocks != 0U))
     {
-      sd_total_kb = (total_blocks * LITTLEFS_SD_BLOCK_SIZE) / 1024UL;
-      sd_used_kb = ((uint32_t)used_blocks * LITTLEFS_SD_BLOCK_SIZE) / 1024UL;
+      sd_total_kb = total_blocks / 2UL;
+      sd_used_kb = (uint32_t)used_blocks / 2UL;
       sd_used_percent = ((uint32_t)used_blocks * 100UL) / total_blocks;
+    }
+    else
+    {
+      sd_err = (int)used_blocks;
     }
     LittleFs_SdUnmount();
   }
@@ -408,7 +427,7 @@ static void BoardLcdShowResources(void)
   }
   else
   {
-    sprintf(line, "SD LFS N/A");
+    sprintf(line, "SD LFS E%d", sd_err);
   }
   BoardLcdShowLine(48U, line);
 }
@@ -503,11 +522,21 @@ static void BoardSdLittleFsTest(void)
   int32_t mount_count = 0;
   char line[32];
 
-  printf("board_io: sd littlefs mount lba=%lu size=%lu\r\n",
-         (unsigned long)LITTLEFS_SD_START_BLOCK,
-         (unsigned long)LITTLEFS_SD_SIZE);
+  printf("board_io: sd littlefs mount lba=%lu\r\n",
+         (unsigned long)LITTLEFS_SD_START_BLOCK);
 
-  err = LittleFs_SdMount(1U);
+  err = LittleFs_SdRawSelfTest();
+  if (err != LFS_ERR_OK)
+  {
+    printf("sd raw test failed err=%d hal=0x%08lX\r\n",
+           err,
+           (unsigned long)LittleFs_SdGetLastHalError());
+  }
+
+  if (err == LFS_ERR_OK)
+  {
+    err = LittleFs_SdMount(1U);
+  }
   if (err == LFS_ERR_OK)
   {
     err = lfs_file_open(LittleFs_SdGetHandle(),
@@ -549,8 +578,10 @@ static void BoardSdLittleFsTest(void)
   }
   else
   {
-    printf("sd littlefs failed err=%d\r\n", err);
-    sprintf(line, "SD LFS ERR");
+    printf("sd littlefs failed err=%d hal=0x%08lX\r\n",
+           err,
+           (unsigned long)LittleFs_SdGetLastHalError());
+    sprintf(line, "SD LFS E%d", err);
   }
   BoardLcdShowLine(48U, line);
 }
