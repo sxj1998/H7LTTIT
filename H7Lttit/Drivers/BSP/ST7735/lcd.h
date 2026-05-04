@@ -30,6 +30,7 @@ extern uint16_t POINT_COLOR;	//»­±ÊÑÕÉ«
 extern uint16_t BACK_COLOR;  //±³¾°É« 
 
 void LCD_Test(void);
+void LCD_InitSimple(void);
 void LCD_SetBrightness(uint32_t Brightness);
 uint32_t LCD_GetBrightness(void);
 void LCD_Light(uint32_t Brightness_Dis,uint32_t time);

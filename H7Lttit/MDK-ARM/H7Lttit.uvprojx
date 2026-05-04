@@ -337,9 +337,9 @@
             <v6Rtti>0</v6Rtti>
             <VariousControls>
               <MiscControls></MiscControls>
-              <Define>USE_HAL_DRIVER,STM32H750xx,TFT96</Define>
+              <Define>USE_HAL_DRIVER,STM32H750xx,TFT96,LFS_NO_ASSERT</Define>
               <Undefine></Undefine>
-              <IncludePath>../Inc;../USB_DEVICE/App;../USB_DEVICE/Target;../LWIP/App;../Middlewares/Third_Party/LwIP/src/include;../Middlewares/Third_Party/LwIP/system;../Middlewares/Third_Party/LwIP/system/arch;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM7/r0p1;../Middlewares/ST/STM32_USB_Device_Library/Core/Inc;../Middlewares/ST/STM32_USB_Device_Library/Class/CDC_RNDIS/Inc;../Drivers/BSP/ST7735;../Drivers/BSP/W25QXX;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include</IncludePath>
+              <IncludePath>../Inc;../USB_DEVICE/App;../USB_DEVICE/Target;../LWIP/App;../Middlewares/Third_Party/LwIP/src/include;../Middlewares/Third_Party/LwIP/system;../Middlewares/Third_Party/LwIP/system/arch;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM7/r0p1;../Middlewares/Third_Party/littlefs;../Middlewares/ST/STM32_USB_Device_Library/Core/Inc;../Middlewares/ST/STM32_USB_Device_Library/Class/CDC_RNDIS/Inc;../Drivers/BSP/ST7735;../Drivers/BSP/W25QXX;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -432,6 +432,16 @@
               <FileName>sdmmc.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Src/sdmmc.c</FilePath>
+            </File>
+            <File>
+              <FileName>littlefs_flash.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Src/littlefs_flash.c</FilePath>
+            </File>
+            <File>
+              <FileName>littlefs_sd.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Src/littlefs_sd.c</FilePath>
             </File>
             <File>
               <FileName>stm32h7xx_it.c</FileName>
@@ -617,11 +627,6 @@
               <FileName>st7735_reg.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Drivers/BSP/ST7735/st7735_reg.c</FilePath>
-            </File>
-            <File>
-              <FileName>logo_160_80.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../Drivers/BSP/ST7735/logo_160_80.c</FilePath>
             </File>
           </Files>
         </Group>
@@ -857,6 +862,21 @@
               <FileName>stream_buffer.c</FileName>
               <FileType>1</FileType>
               <FilePath>../Middlewares/Third_Party/FreeRTOS/Source/stream_buffer.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Middlewares/littlefs</GroupName>
+          <Files>
+            <File>
+              <FileName>lfs.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Middlewares/Third_Party/littlefs/lfs.c</FilePath>
+            </File>
+            <File>
+              <FileName>lfs_util.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../Middlewares/Third_Party/littlefs/lfs_util.c</FilePath>
             </File>
           </Files>
         </Group>

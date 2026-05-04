@@ -2,6 +2,8 @@
 #include "debug.h"
 #include "gpio.h"
 #include "lcd.h"
+#include "littlefs_flash.h"
+#include "littlefs_sd.h"
 #include "quadspi.h"
 #include "rtc.h"
 #include "sdmmc.h"
@@ -28,13 +30,17 @@ static void StartDefaultTask(void *argument);
 static void StartStressTask(void *argument);
 static void StartBoardPeripheralsTask(void *argument);
 static void BoardLcdShowLine(uint16_t y, const char *text);
+static void BoardLcdShowResources(void);
 static void BoardFlashTest(void);
-static void BoardSdTest(void);
+static void BoardLittleFsTest(void);
+static void BoardSdLittleFsTest(void);
 
 void SystemClock_Config(void);
 
-__align(32) static uint8_t s_board_sd_block[512];
 static uint8_t s_board_flash_sample[16];
+
+extern uint8_t Image$$ER_IROM1$$Length[];
+extern uint8_t Image$$RW_IRAM2$$Length[];
 
 int fputc(int ch, FILE *f)
 {
@@ -322,17 +328,18 @@ static void StartBoardPeripheralsTask(void *argument)
   (void)argument;
 
   printf("board_io: lcd init\r\n");
-  LCD_Test();
-  BoardLcdShowLine(4U, "H7Lttit RTOS");
-  BoardLcdShowLine(22U, "RNDIS running");
+  LCD_InitSimple();
+  BoardLcdShowLine(0U, "H7Lttit RTOS");
+  BoardLcdShowLine(16U, "RNDIS running");
 
   BoardFlashTest();
-  BoardSdTest();
+  BoardLittleFsTest();
+  BoardSdLittleFsTest();
 
   while (1)
   {
-    sprintf(line, "tick %lu", (unsigned long)HAL_GetTick());
-    BoardLcdShowLine(58U, line);
+    (void)line;
+    BoardLcdShowResources();
     vTaskDelay(pdMS_TO_TICKS(1000U));
   }
 }
@@ -341,6 +348,69 @@ static void BoardLcdShowLine(uint16_t y, const char *text)
 {
   ST7735_LCD_Driver.FillRect(&st7735_pObj, 0, y, ST7735Ctx.Width, 16, BLACK);
   LCD_ShowString(0, y, ST7735Ctx.Width, 16, 16, (uint8_t *)text);
+}
+
+static void BoardLcdShowResources(void)
+{
+  static const uint32_t kInternalFlashSize = 128UL * 1024UL;
+  static const uint32_t kAxiSramSize = 512UL * 1024UL;
+  const uint32_t flash_used = (uint32_t)Image$$ER_IROM1$$Length;
+  const uint32_t ram_static = (uint32_t)Image$$RW_IRAM2$$Length;
+  const uint32_t heap_free = (uint32_t)xPortGetFreeHeapSize();
+  const uint32_t heap_used = (uint32_t)configTOTAL_HEAP_SIZE - heap_free;
+  uint32_t sd_total_kb = 0U;
+  uint32_t sd_used_kb = 0U;
+  uint32_t sd_used_percent = 0U;
+  char line[32];
+
+  sprintf(line,
+          "Flash %lu/%luK %lu%%",
+          (unsigned long)((flash_used + 1023UL) / 1024UL),
+          (unsigned long)(kInternalFlashSize / 1024UL),
+          (unsigned long)((flash_used * 100UL) / kInternalFlashSize));
+  BoardLcdShowLine(0U, line);
+
+  sprintf(line,
+          "RAM %lu/%luK %lu%%",
+          (unsigned long)((ram_static + 1023UL) / 1024UL),
+          (unsigned long)(kAxiSramSize / 1024UL),
+          (unsigned long)((ram_static * 100UL) / kAxiSramSize));
+  BoardLcdShowLine(16U, line);
+
+  sprintf(line,
+          "Heap %lu/%luK %lu%%",
+          (unsigned long)((heap_used + 1023UL) / 1024UL),
+          (unsigned long)(configTOTAL_HEAP_SIZE / 1024UL),
+          (unsigned long)((heap_used * 100UL) / (uint32_t)configTOTAL_HEAP_SIZE));
+  BoardLcdShowLine(32U, line);
+
+  if (LittleFs_SdMount(0U) == LFS_ERR_OK)
+  {
+    lfs_ssize_t used_blocks = lfs_fs_size(LittleFs_SdGetHandle());
+    uint32_t total_blocks = LittleFs_SdGetBlockCount();
+
+    if ((used_blocks >= 0) && (total_blocks != 0U))
+    {
+      sd_total_kb = (total_blocks * LITTLEFS_SD_BLOCK_SIZE) / 1024UL;
+      sd_used_kb = ((uint32_t)used_blocks * LITTLEFS_SD_BLOCK_SIZE) / 1024UL;
+      sd_used_percent = ((uint32_t)used_blocks * 100UL) / total_blocks;
+    }
+    LittleFs_SdUnmount();
+  }
+
+  if (sd_total_kb != 0U)
+  {
+    sprintf(line,
+            "SD %lu/%luM %lu%%",
+            (unsigned long)((sd_used_kb + 1023UL) / 1024UL),
+            (unsigned long)(sd_total_kb / 1024UL),
+            (unsigned long)sd_used_percent);
+  }
+  else
+  {
+    sprintf(line, "SD LFS N/A");
+  }
+  BoardLcdShowLine(48U, line);
 }
 
 static void BoardFlashTest(void)
@@ -364,43 +434,125 @@ static void BoardFlashTest(void)
          s_board_flash_sample[3]);
 
   sprintf(line, "Flash 0x%04X %s", flash_id, (read_result == HAL_OK) ? "OK" : "ERR");
-  BoardLcdShowLine(40U, line);
+  BoardLcdShowLine(32U, line);
 }
 
-static void BoardSdTest(void)
+static void BoardLittleFsTest(void)
 {
-  HAL_SD_CardInfoTypeDef card_info;
-  HAL_StatusTypeDef read_result = HAL_ERROR;
+  lfs_file_t file;
+  int err;
+  int32_t boot_count = 0;
   char line[32];
 
-  printf("board_io: sdmmc init\r\n");
-  MX_SDMMC1_SD_Init();
-  if (g_sdmmc1_init_ok != 0U)
+  printf("board_io: littlefs mount base=0x%08lX size=%lu\r\n",
+         (unsigned long)LITTLEFS_FLASH_BASE_ADDR,
+         (unsigned long)LITTLEFS_FLASH_SIZE);
+
+  err = LittleFs_FlashMount(1U);
+  if (err == LFS_ERR_OK)
   {
-    if (HAL_SD_GetCardInfo(&hsd1, &card_info) == HAL_OK)
+    err = lfs_file_open(LittleFs_FlashGetHandle(),
+                        &file,
+                        "boot_count",
+                        LFS_O_RDWR | LFS_O_CREAT);
+  }
+
+  if (err == LFS_ERR_OK)
+  {
+    lfs_ssize_t read_len = lfs_file_read(LittleFs_FlashGetHandle(),
+                                         &file,
+                                         &boot_count,
+                                         sizeof(boot_count));
+    if (read_len != (lfs_ssize_t)sizeof(boot_count))
     {
-      read_result = HAL_SD_ReadBlocks(&hsd1, s_board_sd_block, 0U, 1U, 1000U);
-      printf("sd card blocks=%lu block_size=%lu read=%u first=%02X %02X %02X %02X\r\n",
-             (unsigned long)card_info.BlockNbr,
-             (unsigned long)card_info.BlockSize,
-             (unsigned)read_result,
-             s_board_sd_block[0],
-             s_board_sd_block[1],
-             s_board_sd_block[2],
-             s_board_sd_block[3]);
+      boot_count = 0;
     }
-    else
+
+    boot_count++;
+    lfs_file_rewind(LittleFs_FlashGetHandle(), &file);
+    err = (int)lfs_file_write(LittleFs_FlashGetHandle(),
+                              &file,
+                              &boot_count,
+                              sizeof(boot_count));
+    if (err == (int)sizeof(boot_count))
     {
-      printf("sd card info read failed\r\n");
+      err = lfs_file_sync(LittleFs_FlashGetHandle(), &file);
     }
+    lfs_file_close(LittleFs_FlashGetHandle(), &file);
+  }
+
+  LittleFs_FlashUnmount();
+
+  if (err == LFS_ERR_OK)
+  {
+    printf("littlefs ok boot_count=%ld\r\n", (long)boot_count);
+    sprintf(line, "LFS cnt %ld", (long)boot_count);
   }
   else
   {
-    printf("sd card init failed or no card inserted\r\n");
+    printf("littlefs failed err=%d\r\n", err);
+    sprintf(line, "LFS ERR %d", err);
+  }
+  BoardLcdShowLine(48U, line);
+}
+
+static void BoardSdLittleFsTest(void)
+{
+  lfs_file_t file;
+  int err;
+  int32_t mount_count = 0;
+  char line[32];
+
+  printf("board_io: sd littlefs mount lba=%lu size=%lu\r\n",
+         (unsigned long)LITTLEFS_SD_START_BLOCK,
+         (unsigned long)LITTLEFS_SD_SIZE);
+
+  err = LittleFs_SdMount(1U);
+  if (err == LFS_ERR_OK)
+  {
+    err = lfs_file_open(LittleFs_SdGetHandle(),
+                        &file,
+                        "mount_count",
+                        LFS_O_RDWR | LFS_O_CREAT);
   }
 
-  sprintf(line, "SD %s", (read_result == HAL_OK) ? "READ OK" : "NO CARD");
-  BoardLcdShowLine(58U, line);
+  if (err == LFS_ERR_OK)
+  {
+    lfs_ssize_t read_len = lfs_file_read(LittleFs_SdGetHandle(),
+                                         &file,
+                                         &mount_count,
+                                         sizeof(mount_count));
+    if (read_len != (lfs_ssize_t)sizeof(mount_count))
+    {
+      mount_count = 0;
+    }
+
+    mount_count++;
+    lfs_file_rewind(LittleFs_SdGetHandle(), &file);
+    err = (int)lfs_file_write(LittleFs_SdGetHandle(),
+                              &file,
+                              &mount_count,
+                              sizeof(mount_count));
+    if (err == (int)sizeof(mount_count))
+    {
+      err = lfs_file_sync(LittleFs_SdGetHandle(), &file);
+    }
+    lfs_file_close(LittleFs_SdGetHandle(), &file);
+  }
+
+  LittleFs_SdUnmount();
+
+  if (err == LFS_ERR_OK)
+  {
+    printf("sd littlefs ok mount_count=%ld\r\n", (long)mount_count);
+    sprintf(line, "SD LFS %ld", (long)mount_count);
+  }
+  else
+  {
+    printf("sd littlefs failed err=%d\r\n", err);
+    sprintf(line, "SD LFS ERR");
+  }
+  BoardLcdShowLine(48U, line);
 }
 
 void vApplicationMallocFailedHook(void)
