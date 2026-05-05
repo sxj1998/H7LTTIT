@@ -478,6 +478,7 @@ static void StartBoardPeripheralsTask(void *argument)
 #else
     BoardLcdShowResources();
 #endif
+    IotRouter_PortDisplayProcess();
     LvPort_Process();
     vTaskDelay(pdMS_TO_TICKS(1000U));
   }

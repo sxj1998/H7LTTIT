@@ -6,9 +6,12 @@
 #include "task.h"
 
 #include <stdio.h>
+#include <string.h>
 
 #define LV_PORT_DRAW_ROWS 20U
 #define LV_PORT_MAX_LINES 5U
+#define LV_PORT_TERMINAL_LINES 5U
+#define LV_PORT_TERMINAL_LINE_CHARS 28U
 #define LV_PORT_RESOURCE_COUNT 3U
 
 static void LvPort_Flush(lv_display_t *display, const lv_area_t *area, uint8_t *px_map);
@@ -19,6 +22,8 @@ static void LvPort_CreateResource(lv_obj_t *screen,
                                   int32_t x,
                                   int32_t y);
 static uint32_t LvPort_ClampPercent(uint32_t percent);
+static void LvPort_SetResourceVisible(uint8_t visible);
+static void LvPort_SetTerminalVisible(uint8_t visible);
 
 typedef struct
 {
@@ -30,9 +35,12 @@ typedef struct
 static lv_display_t *s_display;
 static lv_obj_t *s_title_label;
 static lv_obj_t *s_line_labels[LV_PORT_MAX_LINES];
+static lv_obj_t *s_terminal_labels[LV_PORT_TERMINAL_LINES];
+static char s_terminal_lines[LV_PORT_TERMINAL_LINES][LV_PORT_TERMINAL_LINE_CHARS + 1U];
 static LvPort_ResourceView s_resources[LV_PORT_RESOURCE_COUNT];
 static uint8_t s_draw_buffer[160U * LV_PORT_DRAW_ROWS * 2U] __attribute__((aligned(4)));
 static uint8_t s_initialized;
+static uint8_t s_terminal_visible;
 
 void LvPort_Init(void)
 {
@@ -68,7 +76,7 @@ void LvPort_Init(void)
   lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
 
   s_title_label = lv_label_create(screen);
-  lv_label_set_text(s_title_label, "H7Lttit Resources");
+  lv_label_set_text(s_title_label, "COM8 -> Screen");
   lv_obj_set_style_text_color(s_title_label, lv_color_hex(0x7FFFD4), 0);
   lv_obj_set_style_text_font(s_title_label, &lv_font_montserrat_14, 0);
   lv_obj_align(s_title_label, LV_ALIGN_TOP_MID, 0, 1);
@@ -88,6 +96,18 @@ void LvPort_Init(void)
     lv_obj_align(s_line_labels[i], LV_ALIGN_BOTTOM_MID, 0, 0);
   }
 
+  for (uint32_t i = 0U; i < LV_PORT_TERMINAL_LINES; i++)
+  {
+    s_terminal_labels[i] = lv_label_create(screen);
+    lv_obj_set_width(s_terminal_labels[i], (int32_t)(width - 8U));
+    lv_obj_set_style_text_color(s_terminal_labels[i], lv_color_hex(0xE8EEF2), 0);
+    lv_obj_set_style_text_font(s_terminal_labels[i], &lv_font_montserrat_12, 0);
+    lv_label_set_long_mode(s_terminal_labels[i], LV_LABEL_LONG_MODE_CLIP);
+    lv_label_set_text(s_terminal_labels[i], "");
+    lv_obj_add_flag(s_terminal_labels[i], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_pos(s_terminal_labels[i], 4, (int32_t)(17U + (i * 12U)));
+  }
+
   LvPort_SetResourceUsage(0U, 0U, 0U);
 
   s_initialized = 1U;
@@ -101,6 +121,45 @@ void LvPort_SetLine(uint32_t line, const char *text)
   }
 
   lv_label_set_text(s_line_labels[line], text);
+}
+
+void LvPort_SetTitle(const char *text)
+{
+  if ((s_initialized == 0U) || (text == NULL))
+  {
+    return;
+  }
+
+  lv_label_set_text(s_title_label, text);
+}
+
+void LvPort_TerminalPushLine(const char *text)
+{
+  if ((s_initialized == 0U) || (text == NULL))
+  {
+    return;
+  }
+
+  if (s_terminal_visible == 0U)
+  {
+    LvPort_SetResourceVisible(0U);
+    LvPort_SetTerminalVisible(1U);
+    s_terminal_visible = 1U;
+    lv_label_set_text(s_title_label, "COM8 Terminal");
+  }
+
+  for (uint32_t i = 0U; i < (LV_PORT_TERMINAL_LINES - 1U); i++)
+  {
+    memcpy(s_terminal_lines[i], s_terminal_lines[i + 1U], sizeof(s_terminal_lines[i]));
+  }
+
+  strncpy(s_terminal_lines[LV_PORT_TERMINAL_LINES - 1U], text, LV_PORT_TERMINAL_LINE_CHARS);
+  s_terminal_lines[LV_PORT_TERMINAL_LINES - 1U][LV_PORT_TERMINAL_LINE_CHARS] = '\0';
+
+  for (uint32_t i = 0U; i < LV_PORT_TERMINAL_LINES; i++)
+  {
+    lv_label_set_text(s_terminal_labels[i], s_terminal_lines[i]);
+  }
 }
 
 void LvPort_SetResourceUsage(uint32_t rom_percent, uint32_t ram_percent, uint32_t sd_percent)
@@ -207,6 +266,40 @@ static void LvPort_CreateResource(lv_obj_t *screen,
 static uint32_t LvPort_ClampPercent(uint32_t percent)
 {
   return (percent > 100U) ? 100U : percent;
+}
+
+static void LvPort_SetResourceVisible(uint8_t visible)
+{
+  for (uint32_t i = 0U; i < LV_PORT_RESOURCE_COUNT; i++)
+  {
+    if (visible != 0U)
+    {
+      lv_obj_remove_flag(s_resources[i].arc, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_remove_flag(s_resources[i].percent_label, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_remove_flag(s_resources[i].name_label, LV_OBJ_FLAG_HIDDEN);
+    }
+    else
+    {
+      lv_obj_add_flag(s_resources[i].arc, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_add_flag(s_resources[i].percent_label, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_add_flag(s_resources[i].name_label, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+}
+
+static void LvPort_SetTerminalVisible(uint8_t visible)
+{
+  for (uint32_t i = 0U; i < LV_PORT_TERMINAL_LINES; i++)
+  {
+    if (visible != 0U)
+    {
+      lv_obj_remove_flag(s_terminal_labels[i], LV_OBJ_FLAG_HIDDEN);
+    }
+    else
+    {
+      lv_obj_add_flag(s_terminal_labels[i], LV_OBJ_FLAG_HIDDEN);
+    }
+  }
 }
 
 static void LvPort_Flush(lv_display_t *display, const lv_area_t *area, uint8_t *px_map)

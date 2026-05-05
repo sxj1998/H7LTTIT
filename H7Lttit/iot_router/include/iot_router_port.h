@@ -12,6 +12,7 @@ extern "C" {
 
 void IotRouter_PortInit(void);
 void IotRouter_PortProcess(void);
+void IotRouter_PortDisplayProcess(void);
 void IotRouter_PortSubmitUartByte(uint8_t byte);
 void IotRouter_PortSubmitUart2Byte(uint8_t byte);
 void IotRouter_PortSubmitUsbData(const uint8_t *data, size_t len);

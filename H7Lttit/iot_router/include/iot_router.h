@@ -25,6 +25,7 @@ extern "C" {
 #define IOT_ROUTER_CHANNEL_UART  (1UL << 1)
 #define IOT_ROUTER_CHANNEL_USB   (1UL << 2)
 #define IOT_ROUTER_CHANNEL_OTA   (1UL << 3)
+#define IOT_ROUTER_CHANNEL_SCREEN (1UL << 4)
 
 #define IOT_ROUTER_RULE_TAG_SOURCE       (1UL << 0)
 #define IOT_ROUTER_RULE_CONSUME_ON_MATCH (1UL << 1)

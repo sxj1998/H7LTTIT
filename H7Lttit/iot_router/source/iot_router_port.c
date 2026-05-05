@@ -1,5 +1,6 @@
 #include "iot_router_port.h"
 
+#include "lv_port_lvgl.h"
 #include "main.h"
 
 #include <string.h>
@@ -26,6 +27,9 @@ static uint8_t s_uart_line[IOT_ROUTER_LINE_BUFFER_SIZE];
 static size_t s_uart_line_len;
 static uint8_t s_uart2_line[IOT_ROUTER_LINE_BUFFER_SIZE];
 static size_t s_uart2_line_len;
+static char s_screen_line[IOT_ROUTER_LINE_BUFFER_SIZE];
+static size_t s_screen_line_len;
+static volatile uint8_t s_screen_line_pending;
 
 typedef struct {
     uint32_t source;
@@ -39,6 +43,7 @@ static PortPacket s_packet_queue[IOT_ROUTER_PACKET_QUEUE_SIZE];
 
 static int port_uart_write(void *ctx, const uint8_t *data, size_t len);
 static int port_usb_write(void *ctx, const uint8_t *data, size_t len);
+static int port_screen_write(void *ctx, const uint8_t *data, size_t len);
 static IotRouterStatus port_ota_action(IotRouter *router,
                                         const IotRouterRule *rule,
                                         uint32_t source,
@@ -55,9 +60,11 @@ void IotRouter_PortInit(void)
     IotRouterChannel uart_channel;
     IotRouterChannel usb_channel;
     IotRouterChannel ota_channel;
+    IotRouterChannel screen_channel;
     IotRouterRule ota_rule;
     IotRouterRule uart_debug_rule;
     IotRouterRule uart2_debug_rule;
+    IotRouterRule uart2_screen_rule;
     IotRouterRule usb_debug_rule;
     IotRouterRule uart_usb_rule;
 
@@ -87,11 +94,17 @@ void IotRouter_PortInit(void)
     ota_channel.write = port_uart_write;
     (void)IotRouter_AddChannel(&s_router, &ota_channel);
 
+    memset(&screen_channel, 0, sizeof(screen_channel));
+    screen_channel.id = IOT_ROUTER_CHANNEL_SCREEN;
+    screen_channel.name = "screen";
+    screen_channel.write = port_screen_write;
+    (void)IotRouter_AddChannel(&s_router, &screen_channel);
+
     memset(&ota_rule, 0, sizeof(ota_rule));
     ota_rule.name = "ota_detect";
     ota_rule.source_mask = IOT_ROUTER_SOURCE_UART | IOT_ROUTER_SOURCE_UART2 | IOT_ROUTER_SOURCE_USB;
     ota_rule.contains = "ota";
-    ota_rule.output_mask = IOT_ROUTER_CHANNEL_OTA;
+    ota_rule.output_mask = IOT_ROUTER_CHANNEL_OTA | IOT_ROUTER_CHANNEL_SCREEN;
     ota_rule.flags = IOT_ROUTER_RULE_CASE_INSENSITIVE |
                      IOT_ROUTER_RULE_TAG_SOURCE |
                      IOT_ROUTER_RULE_CONSUME_ON_MATCH;
@@ -112,6 +125,12 @@ void IotRouter_PortInit(void)
     uart2_debug_rule.flags = IOT_ROUTER_RULE_TAG_SOURCE;
     (void)IotRouter_AddRule(&s_router, &uart2_debug_rule);
 
+    memset(&uart2_screen_rule, 0, sizeof(uart2_screen_rule));
+    uart2_screen_rule.name = "uart2_to_screen";
+    uart2_screen_rule.source_mask = IOT_ROUTER_SOURCE_UART2;
+    uart2_screen_rule.output_mask = IOT_ROUTER_CHANNEL_SCREEN;
+    (void)IotRouter_AddRule(&s_router, &uart2_screen_rule);
+
     memset(&usb_debug_rule, 0, sizeof(usb_debug_rule));
     usb_debug_rule.name = "usb_to_debug";
     usb_debug_rule.source_mask = IOT_ROUTER_SOURCE_USB;
@@ -129,6 +148,7 @@ void IotRouter_PortInit(void)
 #if (IOT_ROUTER_ENABLE_DEMO_FORWARD == 0U)
     (void)IotRouter_SetRuleEnabled(&s_router, "uart_to_debug", 0U);
     (void)IotRouter_SetRuleEnabled(&s_router, "uart2_to_debug", 0U);
+    (void)IotRouter_SetRuleEnabled(&s_router, "uart2_to_screen", 0U);
     (void)IotRouter_SetRuleEnabled(&s_router, "usb_to_debug", 0U);
 #endif
 
@@ -138,6 +158,8 @@ void IotRouter_PortInit(void)
 
     s_uart_line_len = 0U;
     s_uart2_line_len = 0U;
+    s_screen_line_len = 0U;
+    s_screen_line_pending = 0U;
     s_packet_head = 0U;
     s_packet_tail = 0U;
     s_router_ready = 1U;
@@ -154,6 +176,21 @@ void IotRouter_PortProcess(void)
     while (port_dequeue_packet(&packet) != 0U) {
         (void)IotRouter_RoutePacket(&s_router, packet.source, packet.data, packet.len);
     }
+}
+
+void IotRouter_PortDisplayProcess(void)
+{
+    char line[IOT_ROUTER_LINE_BUFFER_SIZE];
+
+    if (s_screen_line_pending == 0U) {
+        return;
+    }
+
+    memcpy(line, s_screen_line, sizeof(line));
+    line[sizeof(line) - 1U] = '\0';
+    s_screen_line_pending = 0U;
+
+    LvPort_TerminalPushLine(line);
 }
 
 void IotRouter_PortSubmitUartByte(uint8_t byte)
@@ -217,6 +254,35 @@ static int port_usb_write(void *ctx, const uint8_t *data, size_t len)
      * touching the portable router core.
      */
     return -1;
+}
+
+static int port_screen_write(void *ctx, const uint8_t *data, size_t len)
+{
+    (void)ctx;
+
+    if ((data == NULL) || (len == 0U)) {
+        return 0;
+    }
+
+    for (size_t i = 0U; i < len; i++) {
+        uint8_t ch = data[i];
+
+        if ((ch == '\r') || (ch == '\n')) {
+            if (s_screen_line_len != 0U) {
+                s_screen_line[s_screen_line_len] = '\0';
+                s_screen_line_pending = 1U;
+                s_screen_line_len = 0U;
+            }
+            continue;
+        }
+
+        if (s_screen_line_len < (sizeof(s_screen_line) - 1U)) {
+            s_screen_line[s_screen_line_len] = (char)ch;
+            s_screen_line_len++;
+        }
+    }
+
+    return 0;
 }
 
 static IotRouterStatus port_ota_action(IotRouter *router,
