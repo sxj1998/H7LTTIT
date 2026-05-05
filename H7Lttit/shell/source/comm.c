@@ -1,5 +1,6 @@
 #include "comm.h"
 
+#include "iot_router_port.h"
 #include "main.h"
 
 comm_t *comm;
@@ -104,6 +105,9 @@ void comm_uart_irq_handler(void)
     }
 
     while ((USART1->ISR & USART_ISR_RXNE_RXFNE) != 0U) {
-        uart_rx_push((uint8_t)USART1->RDR);
+        uint8_t ch = (uint8_t)USART1->RDR;
+
+        uart_rx_push(ch);
+        IotRouter_PortSubmitUartByte(ch);
     }
 }

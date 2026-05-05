@@ -4,6 +4,7 @@
 #include "fs_port.h"
 #include "gpio.h"
 #include "heap.h"
+#include "iot_router_port.h"
 #include "lcd.h"
 #include "littlefs_sd.h"
 #include "lv_port_lvgl.h"
@@ -28,10 +29,12 @@ static const uint32_t kUartBaudrate = 115200U;
 #define ENABLE_STRESS_TEST 0U
 #define ENABLE_PERIODIC_STATUS_PRINT 0U
 #define ENABLE_SERIAL_SHELL 1U
+#define ENABLE_IOT_ROUTER 1U
 
 static void MPU_Config(void);
 static void CPU_CACHE_Enable(void);
 static void USART1_Init(void);
+static void USART2_Init(void);
 static void USART1_WriteChar(uint8_t ch);
 static void StartDefaultTask(void *argument);
 #if (ENABLE_SERIAL_SHELL != 0U)
@@ -88,8 +91,12 @@ int main(void)
   MX_TIM1_Init();
 
   USART1_Init();
+  USART2_Init();
   heap_init();
   comm_init_uart(NULL);
+#if (ENABLE_IOT_ROUTER != 0U)
+  IotRouter_PortInit();
+#endif
   HAL_PWREx_EnableUSBVoltageDetector();
   MX_USB_DEVICE_Init();
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
@@ -294,6 +301,33 @@ static void USART1_Init(void)
   HAL_NVIC_EnableIRQ(USART1_IRQn);
 }
 
+static void USART2_Init(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_USART2_CLK_ENABLE();
+  __HAL_RCC_USART234578_CONFIG(RCC_USART234578CLKSOURCE_D2PCLK1);
+
+  GPIO_InitStruct.Pin = GPIO_PIN_2 | GPIO_PIN_3;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF7_USART2;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  USART2->CR1 = 0;
+  USART2->CR2 = 0;
+  USART2->CR3 = 0;
+  USART2->PRESC = 0;
+  USART2->BRR = HAL_RCC_GetPCLK1Freq() / kUartBaudrate;
+  USART2->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_FIFOEN |
+                USART_CR1_RXNEIE_RXFNEIE | USART_CR1_UE;
+
+  HAL_NVIC_SetPriority(USART2_IRQn, 15U, 0U);
+  HAL_NVIC_EnableIRQ(USART2_IRQn);
+}
+
 static void USART1_WriteChar(uint8_t ch)
 {
   while ((USART1->ISR & USART_ISR_TXE_TXFNF) == 0U)
@@ -312,6 +346,9 @@ static void StartDefaultTask(void *argument)
   while (1)
   {
     USB_RNDIS_LWIP_Poll();
+#if (ENABLE_IOT_ROUTER != 0U)
+    IotRouter_PortProcess();
+#endif
 
 #if (ENABLE_PERIODIC_STATUS_PRINT != 0U)
     if (++print_ticks >= 100U)

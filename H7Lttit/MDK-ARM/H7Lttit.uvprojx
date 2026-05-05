@@ -336,7 +336,7 @@
               <MiscControls>--diag_suppress=1,68,111,188</MiscControls>
               <Define>USE_HAL_DRIVER,STM32H750xx,TFT96,LFS_NO_ASSERT,LFS_NO_ERROR,W25Qxx,LV_CONF_INCLUDE_SIMPLE,LV_DISABLE_API_MAPPING</Define>
               <Undefine></Undefine>
-              <IncludePath>../Inc;../shell/include;../fs/include;../vfs/include;../vim/include;../lib/include;../USB_DEVICE/App;../USB_DEVICE/Target;../LWIP/App;../Middlewares/Third_Party/LwIP/src/include;../Middlewares/Third_Party/LwIP/system;../Middlewares/Third_Party/LwIP/system/arch;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM7/r0p1;../Middlewares/Third_Party/littlefs;../Middlewares/ST/STM32_USB_Device_Library/Core/Inc;../Middlewares/ST/STM32_USB_Device_Library/Class/CDC_RNDIS/Inc;../Drivers/BSP/ST7735;../Drivers/BSP/W25QXX;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../lvgl_port;../Middlewares/Third_Party/lvgl;../Middlewares/Third_Party/lvgl/src;../Middlewares/Third_Party/lvgl/include</IncludePath>
+              <IncludePath>../Inc;../shell/include;../fs/include;../vfs/include;../vim/include;../lib/include;../iot_router/include;../USB_DEVICE/App;../USB_DEVICE/Target;../LWIP/App;../Middlewares/Third_Party/LwIP/src/include;../Middlewares/Third_Party/LwIP/system;../Middlewares/Third_Party/LwIP/system/arch;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM7/r0p1;../Middlewares/Third_Party/littlefs;../Middlewares/ST/STM32_USB_Device_Library/Core/Inc;../Middlewares/ST/STM32_USB_Device_Library/Class/CDC_RNDIS/Inc;../Drivers/BSP/ST7735;../Drivers/BSP/W25QXX;../Drivers/STM32H7xx_HAL_Driver/Inc;../Drivers/STM32H7xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32H7xx/Include;../Drivers/CMSIS/Include;../lvgl_port;../Middlewares/Third_Party/lvgl;../Middlewares/Third_Party/lvgl/src;../Middlewares/Third_Party/lvgl/include</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -519,6 +519,21 @@
               <FileName>vim.c</FileName>
               <FileType>1</FileType>
               <FilePath>../vim/source/vim.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>lttit/iot_router</GroupName>
+          <Files>
+            <File>
+              <FileName>iot_router.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../iot_router/source/iot_router.c</FilePath>
+            </File>
+            <File>
+              <FileName>iot_router_port.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../iot_router/source/iot_router_port.c</FilePath>
             </File>
           </Files>
         </Group>

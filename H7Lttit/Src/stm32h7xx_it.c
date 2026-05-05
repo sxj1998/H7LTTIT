@@ -2,6 +2,7 @@
 #include "stm32h7xx_it.h"
 
 #include "comm.h"
+#include "iot_router_port.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -73,4 +74,17 @@ void SDMMC1_IRQHandler(void)
 void USART1_IRQHandler(void)
 {
   comm_uart_irq_handler();
+}
+
+void USART2_IRQHandler(void)
+{
+  if ((USART2->ISR & (USART_ISR_ORE | USART_ISR_FE | USART_ISR_NE | USART_ISR_PE)) != 0U)
+  {
+    USART2->ICR = USART_ICR_ORECF | USART_ICR_FECF | USART_ICR_NECF | USART_ICR_PECF;
+  }
+
+  while ((USART2->ISR & USART_ISR_RXNE_RXFNE) != 0U)
+  {
+    IotRouter_PortSubmitUart2Byte((uint8_t)USART2->RDR);
+  }
 }
