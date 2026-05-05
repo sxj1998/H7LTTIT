@@ -4,7 +4,8 @@ param(
     [string]$TargetName = "H7Lttit",
     [string]$OutputDir = "F:\CODE_STUDY\MCU\H7Lttit\H7Lttit\MDK-ARM\H7Lttit",
     [string]$JLinkPath = "C:\Keil_v5\ARM\Segger\JLink.exe",
-    [string]$CommandFile = "F:\CODE_STUDY\MCU\H7Lttit\tools\flash_stm32h750.jlink"
+    [string]$CommandFile = "F:\CODE_STUDY\MCU\H7Lttit\tools\flash_stm32h750.jlink",
+    [switch]$UseJLinkCommander
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,8 +17,17 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
     -TargetName $TargetName `
     -OutputDir $OutputDir
 
-& (Join-Path $scriptDir "flash.ps1") `
-    -JLinkPath $JLinkPath `
-    -CommandFile $CommandFile
+if ($UseJLinkCommander) {
+    & (Join-Path $scriptDir "flash.ps1") `
+        -JLinkPath $JLinkPath `
+        -CommandFile $CommandFile
+} else {
+    & (Join-Path $scriptDir "flash_keil.ps1") `
+        -Uv4Path $Uv4Path `
+        -JLinkPath $JLinkPath `
+        -ProjectPath $ProjectPath `
+        -TargetName $TargetName `
+        -OutputDir $OutputDir
+}
 
 Write-Host "[build_and_flash] done"

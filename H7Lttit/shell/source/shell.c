@@ -5,6 +5,7 @@
 #include "heap.h"
 #include "vfs.h"
 #include "vim.h"
+#include "w25q_layout.h"
 
 #include "FreeRTOS.h"
 
@@ -63,8 +64,8 @@ static int cmd_help(int argc, char **argv)
 {
     (void)argc;
     (void)argv;
-    comm_write("commands: help mem pwd ls cat touch write mkdir cd vfs vim reboot\r\n",
-               (int)(sizeof("commands: help mem pwd ls cat touch write mkdir cd vfs vim reboot\r\n") - 1U));
+    comm_write("commands: help mem w25q pwd ls cat touch write mkdir cd vfs vim reboot\r\n",
+               (int)(sizeof("commands: help mem w25q pwd ls cat touch write mkdir cd vfs vim reboot\r\n") - 1U));
     return 0;
 }
 
@@ -80,6 +81,48 @@ static int cmd_mem(int argc, char **argv)
     len = snprintf(buf, sizeof(buf), "heap_free=%lu heap_min=%lu\r\n",
                    (unsigned long)st.remain_size,
                    (unsigned long)st.max_free_block);
+    if (len > 0) {
+        comm_write(buf, len);
+    }
+    return 0;
+}
+
+static int cmd_w25q(int argc, char **argv)
+{
+    uint8_t sample[16];
+    uint32_t address = 0U;
+    const volatile uint8_t *xip;
+    char buf[192];
+    int len;
+
+    if (argc > 1) {
+        address = (uint32_t)strtoul(argv[1], NULL, 0);
+    }
+
+    if (address > (W25Q_CODE_SIZE - sizeof(sample))) {
+        comm_write("w25q: address out of range\r\n",
+                   (int)(sizeof("w25q: address out of range\r\n") - 1U));
+        return -1;
+    }
+
+    memset(sample, 0, sizeof(sample));
+    xip = (const volatile uint8_t *)(QSPI_BASE + address);
+    for (uint32_t i = 0U; i < sizeof(sample); i++) {
+        sample[i] = xip[i];
+    }
+
+    len = snprintf(buf,
+                   sizeof(buf),
+                   "w25q xip addr=0x%06lX data=%02X %02X %02X %02X %02X %02X %02X %02X\r\n",
+                   (unsigned long)address,
+                   sample[0],
+                   sample[1],
+                   sample[2],
+                   sample[3],
+                   sample[4],
+                   sample[5],
+                   sample[6],
+                   sample[7]);
     if (len > 0) {
         comm_write(buf, len);
     }
@@ -285,6 +328,7 @@ struct cmd_entry {
 static const struct cmd_entry cmd_table[] = {
     {"help", cmd_help},
     {"mem", cmd_mem},
+    {"w25q", cmd_w25q},
     {"pwd", cmd_pwd},
     {"ls", cmd_ls},
     {"cat", cmd_cat},

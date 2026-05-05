@@ -238,9 +238,12 @@ __Vectors_Size  EQU  __Vectors_End - __Vectors
 Reset_Handler    PROC
                  EXPORT  Reset_Handler                    [WEAK]
         IMPORT  SystemInit
+        IMPORT  Boot_QSPI_MemoryMapped
         IMPORT  __main
 
                  LDR     R0, =SystemInit
+                 BLX     R0
+                 LDR     R0, =Boot_QSPI_MemoryMapped
                  BLX     R0
                  LDR     R0, =__main
                  BX      R0

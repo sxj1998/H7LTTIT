@@ -39,10 +39,10 @@ void MX_QUADSPI_Init(void)
   /* USER CODE END QUADSPI_Init 1 */
   hqspi.Instance = QUADSPI;
   hqspi.Init.ClockPrescaler = 2-1;
-  hqspi.Init.FifoThreshold = 1;
+  hqspi.Init.FifoThreshold = 32;
   hqspi.Init.SampleShifting = QSPI_SAMPLE_SHIFTING_HALFCYCLE;
-  hqspi.Init.FlashSize = 23-1;
-  hqspi.Init.ChipSelectHighTime = QSPI_CS_HIGH_TIME_3_CYCLE;
+  hqspi.Init.FlashSize = 24-1;
+  hqspi.Init.ChipSelectHighTime = QSPI_CS_HIGH_TIME_8_CYCLE;
   hqspi.Init.ClockMode = QSPI_CLOCK_MODE_3;
   hqspi.Init.FlashID = QSPI_FLASH_ID_1;
   hqspi.Init.DualFlash = QSPI_DUALFLASH_DISABLE;
@@ -116,8 +116,6 @@ void HAL_QSPI_MspInit(QSPI_HandleTypeDef* qspiHandle)
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     GPIO_InitStruct.Alternate = GPIO_AF10_QUADSPI;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-    HAL_I2CEx_EnableFastModePlus(SYSCFG_PMCR_I2C_PB6_FMP);
 
   /* USER CODE BEGIN QUADSPI_MspInit 1 */
 

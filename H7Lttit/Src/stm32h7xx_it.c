@@ -1,6 +1,8 @@
 #include "main.h"
 #include "stm32h7xx_it.h"
 
+#include "comm.h"
+
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -66,4 +68,9 @@ void OTG_FS_IRQHandler(void)
 void SDMMC1_IRQHandler(void)
 {
   HAL_SD_IRQHandler(&hsd1);
+}
+
+void USART1_IRQHandler(void)
+{
+  comm_uart_irq_handler();
 }

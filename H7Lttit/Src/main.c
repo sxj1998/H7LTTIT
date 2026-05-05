@@ -5,7 +5,6 @@
 #include "gpio.h"
 #include "heap.h"
 #include "lcd.h"
-#include "littlefs_flash.h"
 #include "littlefs_sd.h"
 #include "quadspi.h"
 #include "rtc.h"
@@ -16,7 +15,7 @@
 #include "usb_device.h"
 #include "usb_rndis_lwip.h"
 #include "vfs_port.h"
-#include "w25qxx_qspi.h"
+#include "w25q_layout.h"
 
 #include "FreeRTOS.h"
 #include "task.h"
@@ -27,11 +26,7 @@
 static const uint32_t kUartBaudrate = 115200U;
 #define ENABLE_STRESS_TEST 0U
 #define ENABLE_PERIODIC_STATUS_PRINT 0U
-#define ENABLE_LITTLEFS_STRESS_TEST 0U
 #define ENABLE_SERIAL_SHELL 1U
-#define LITTLEFS_STRESS_MAX_ITERATIONS 200U
-#define LITTLEFS_STRESS_REPORT_INTERVAL 10U
-#define LITTLEFS_STRESS_DATA_SIZE 512U
 
 static void MPU_Config(void);
 static void CPU_CACHE_Enable(void);
@@ -50,26 +45,21 @@ static void BoardLcdShowLine(uint16_t y, const char *text);
 static void BoardLcdShowResources(void);
 #endif
 static void BoardFlashTest(void);
-static void BoardLittleFsTest(void);
 static void BoardSdLittleFsTest(void);
-#if (ENABLE_LITTLEFS_STRESS_TEST != 0U)
-static void BoardLittleFsStressTest(void);
-static int BoardLittleFsWriteVerify(lfs_t *fs, const char *path, uint32_t iteration);
-#endif
 
 void SystemClock_Config(void);
 
 static uint8_t s_board_flash_sample[16];
-#if (ENABLE_LITTLEFS_STRESS_TEST != 0U)
-static uint8_t s_lfs_stress_write[LITTLEFS_STRESS_DATA_SIZE];
-static uint8_t s_lfs_stress_read[LITTLEFS_STRESS_DATA_SIZE];
-#endif
 #if (ENABLE_SERIAL_SHELL != 0U)
 static struct superblock s_shell_fs_sb;
 static volatile uint8_t s_shell_ready;
 #endif
 
+#ifdef W25Qxx
+extern uint8_t Image$$ER_IROM2$$Length[];
+#else
 extern uint8_t Image$$ER_IROM1$$Length[];
+#endif
 extern uint8_t Image$$RW_IRAM2$$Length[];
 
 int fputc(int ch, FILE *f)
@@ -108,6 +98,9 @@ int main(void)
   printf("H7Lttit basic framework started\r\n");
   printf("Peripherals: GPIO, USART1, USB RNDIS + LwIP, SPI4 LCD, QSPI Flash, SDMMC1, TIM1 PWM, RTC stub\r\n");
   printf("RNDIS static IP: 192.168.7.1/24, MAC: 02:12:34:56:78:9A\r\n");
+  printf("W25Q XIP code capacity: %lu bytes (%lu KB)\r\n",
+         (unsigned long)W25Q_CODE_SIZE,
+         (unsigned long)(W25Q_CODE_SIZE / 1024UL));
 
   if (xTaskCreate(StartDefaultTask,
                   "default",
@@ -245,6 +238,18 @@ static void MPU_Config(void)
   HAL_MPU_ConfigRegion(&MPU_InitStruct);
 
   MPU_InitStruct.Number = MPU_REGION_NUMBER1;
+  MPU_InitStruct.BaseAddress = QSPI_BASE;
+  MPU_InitStruct.Size = MPU_REGION_SIZE_16MB;
+  MPU_InitStruct.AccessPermission = MPU_REGION_PRIV_RO;
+  MPU_InitStruct.IsBufferable = MPU_ACCESS_BUFFERABLE;
+  MPU_InitStruct.IsCacheable = MPU_ACCESS_CACHEABLE;
+  MPU_InitStruct.IsShareable = MPU_ACCESS_NOT_SHAREABLE;
+  MPU_InitStruct.DisableExec = MPU_INSTRUCTION_ACCESS_ENABLE;
+  MPU_InitStruct.TypeExtField = MPU_TEX_LEVEL1;
+  MPU_InitStruct.SubRegionDisable = 0x00;
+  HAL_MPU_ConfigRegion(&MPU_InitStruct);
+
+  MPU_InitStruct.Number = MPU_REGION_NUMBER2;
   MPU_InitStruct.BaseAddress = D1_AXISRAM_BASE;
   MPU_InitStruct.Size = MPU_REGION_SIZE_512KB;
   MPU_InitStruct.AccessPermission = MPU_REGION_FULL_ACCESS;
@@ -283,7 +288,11 @@ static void USART1_Init(void)
   USART1->CR3 = 0;
   USART1->PRESC = 0;
   USART1->BRR = HAL_RCC_GetPCLK2Freq() / kUartBaudrate;
-  USART1->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_UE;
+  USART1->CR1 = USART_CR1_TE | USART_CR1_RE | USART_CR1_FIFOEN |
+                USART_CR1_RXNEIE_RXFNEIE | USART_CR1_UE;
+
+  HAL_NVIC_SetPriority(USART1_IRQn, 15U, 0U);
+  HAL_NVIC_EnableIRQ(USART1_IRQn);
 }
 
 static void USART1_WriteChar(uint8_t ch)
@@ -406,7 +415,6 @@ static void StartBoardPeripheralsTask(void *argument)
 
   BoardFlashTest();
   BoardSdLittleFsTest();
-  BoardLittleFsTest();
 
 #if (ENABLE_SERIAL_SHELL != 0U)
   fs_port_init();
@@ -423,10 +431,6 @@ static void StartBoardPeripheralsTask(void *argument)
     printf("shell fs mount failed\r\n");
     BoardLcdShowLine(64U, "Shell fs err");
   }
-#endif
-
-#if (ENABLE_LITTLEFS_STRESS_TEST != 0U)
-  BoardLittleFsStressTest();
 #endif
 
   while (1)
@@ -450,9 +454,17 @@ static void BoardLcdShowLine(uint16_t y, const char *text)
 #if (ENABLE_SERIAL_SHELL == 0U)
 static void BoardLcdShowResources(void)
 {
-  static const uint32_t kInternalFlashSize = 128UL * 1024UL;
+#ifdef W25Qxx
+  static const uint32_t kCodeFlashSize = W25Q_CODE_SIZE;
+#else
+  static const uint32_t kCodeFlashSize = 128UL * 1024UL;
+#endif
   static const uint32_t kAxiSramSize = 512UL * 1024UL;
+#ifdef W25Qxx
+  const uint32_t flash_used = (uint32_t)Image$$ER_IROM2$$Length;
+#else
   const uint32_t flash_used = (uint32_t)Image$$ER_IROM1$$Length;
+#endif
   const uint32_t ram_static = (uint32_t)Image$$RW_IRAM2$$Length;
   const uint32_t heap_free = (uint32_t)xPortGetFreeHeapSize();
   const uint32_t heap_used = (uint32_t)configTOTAL_HEAP_SIZE - heap_free;
@@ -465,8 +477,8 @@ static void BoardLcdShowResources(void)
   sprintf(line,
           "Flash %lu/%luK %lu%%",
           (unsigned long)((flash_used + 1023UL) / 1024UL),
-          (unsigned long)(kInternalFlashSize / 1024UL),
-          (unsigned long)((flash_used * 100UL) / kInternalFlashSize));
+          (unsigned long)(kCodeFlashSize / 1024UL),
+          (unsigned long)((flash_used * 100UL) / kCodeFlashSize));
   BoardLcdShowLine(0U, line);
 
   sprintf(line,
@@ -520,85 +532,29 @@ static void BoardLcdShowResources(void)
 
 static void BoardFlashTest(void)
 {
-  uint16_t flash_id;
-  uint8_t read_result;
+  const volatile uint8_t *xip = (const volatile uint8_t *)QSPI_BASE;
   char line[32];
 
-  printf("board_io: qspi flash init\r\n");
-  w25qxx_Init();
-  flash_id = w25qxx_GetID();
+  printf("board_io: qspi xip read\r\n");
   memset(s_board_flash_sample, 0, sizeof(s_board_flash_sample));
-  read_result = W25qxx_Read(s_board_flash_sample, 0U, sizeof(s_board_flash_sample));
 
-  printf("qspi flash id=0x%04X read=%u first=%02X %02X %02X %02X\r\n",
-         flash_id,
-         read_result,
+  for (uint32_t i = 0U; i < sizeof(s_board_flash_sample); i++)
+  {
+    s_board_flash_sample[i] = xip[i];
+  }
+
+  printf("qspi xip first=%02X %02X %02X %02X\r\n",
          s_board_flash_sample[0],
          s_board_flash_sample[1],
          s_board_flash_sample[2],
          s_board_flash_sample[3]);
 
-  sprintf(line, "Flash 0x%04X %s", flash_id, (read_result == HAL_OK) ? "OK" : "ERR");
+  sprintf(line, "W25Q XIP %02X%02X%02X%02X",
+          s_board_flash_sample[0],
+          s_board_flash_sample[1],
+          s_board_flash_sample[2],
+          s_board_flash_sample[3]);
   BoardLcdShowLine(32U, line);
-}
-
-static void BoardLittleFsTest(void)
-{
-  lfs_file_t file;
-  int err;
-  int32_t boot_count = 0;
-  char line[32];
-
-  printf("board_io: littlefs mount base=0x%08lX size=%lu\r\n",
-         (unsigned long)LITTLEFS_FLASH_BASE_ADDR,
-         (unsigned long)LITTLEFS_FLASH_SIZE);
-
-  err = LittleFs_FlashMount(1U);
-  if (err == LFS_ERR_OK)
-  {
-    err = lfs_file_open(LittleFs_FlashGetHandle(),
-                        &file,
-                        "boot_count",
-                        LFS_O_RDWR | LFS_O_CREAT);
-  }
-
-  if (err == LFS_ERR_OK)
-  {
-    lfs_ssize_t read_len = lfs_file_read(LittleFs_FlashGetHandle(),
-                                         &file,
-                                         &boot_count,
-                                         sizeof(boot_count));
-    if (read_len != (lfs_ssize_t)sizeof(boot_count))
-    {
-      boot_count = 0;
-    }
-
-    boot_count++;
-    lfs_file_rewind(LittleFs_FlashGetHandle(), &file);
-    err = (int)lfs_file_write(LittleFs_FlashGetHandle(),
-                              &file,
-                              &boot_count,
-                              sizeof(boot_count));
-    if (err == (int)sizeof(boot_count))
-    {
-      err = lfs_file_sync(LittleFs_FlashGetHandle(), &file);
-    }
-    lfs_file_close(LittleFs_FlashGetHandle(), &file);
-  }
-
-  LittleFs_FlashUnmount();
-
-  if (err == LFS_ERR_OK)
-  {
-    printf("littlefs ok boot_count=%ld\r\n", (long)boot_count);
-    sprintf(line, "LFS cnt %ld", (long)boot_count);
-  }
-  else
-  {
-    printf("littlefs failed err=%d\r\n", err);
-    sprintf(line, "LFS ERR %d", err);
-  }
-  BoardLcdShowLine(48U, line);
 }
 
 static void BoardSdLittleFsTest(void)
@@ -671,152 +627,6 @@ static void BoardSdLittleFsTest(void)
   }
   BoardLcdShowLine(48U, line);
 }
-
-#if (ENABLE_LITTLEFS_STRESS_TEST != 0U)
-static void BoardLittleFsStressTest(void)
-{
-  uint32_t iteration = 0U;
-  TickType_t start_ticks = xTaskGetTickCount();
-  char line[32];
-
-  printf("littlefs stress: start data=%lu report=%lu\r\n",
-         (unsigned long)LITTLEFS_STRESS_DATA_SIZE,
-         (unsigned long)LITTLEFS_STRESS_REPORT_INTERVAL);
-  BoardLcdShowLine(64U, "LFS stress run");
-
-  while (1)
-  {
-    int flash_err;
-    int sd_err;
-
-    iteration++;
-
-    flash_err = LittleFs_FlashMount(1U);
-    if (flash_err == LFS_ERR_OK)
-    {
-      flash_err = BoardLittleFsWriteVerify(LittleFs_FlashGetHandle(),
-                                           "flash_stress.bin",
-                                           iteration);
-    }
-    LittleFs_FlashUnmount();
-
-    if (flash_err != LFS_ERR_OK)
-    {
-      printf("littlefs stress: flash failed iter=%lu err=%d\r\n",
-             (unsigned long)iteration,
-             flash_err);
-      sprintf(line, "F stress E%d", flash_err);
-      BoardLcdShowLine(64U, line);
-      break;
-    }
-
-    sd_err = LittleFs_SdMount(1U);
-    if (sd_err == LFS_ERR_OK)
-    {
-      sd_err = BoardLittleFsWriteVerify(LittleFs_SdGetHandle(),
-                                        "sd_stress.bin",
-                                        iteration);
-    }
-    LittleFs_SdUnmount();
-
-    if (sd_err != LFS_ERR_OK)
-    {
-      printf("littlefs stress: sd failed iter=%lu err=%d hal=0x%08lX\r\n",
-             (unsigned long)iteration,
-             sd_err,
-             (unsigned long)LittleFs_SdGetLastHalError());
-      sprintf(line, "SD stress E%d", sd_err);
-      BoardLcdShowLine(64U, line);
-      break;
-    }
-
-    if ((iteration % LITTLEFS_STRESS_REPORT_INTERVAL) == 0U)
-    {
-      uint32_t elapsed_ms = (uint32_t)((xTaskGetTickCount() - start_ticks) * portTICK_PERIOD_MS);
-
-      printf("littlefs stress: iter=%lu elapsed=%lums heap_free=%lu heap_min=%lu stack_min=%lu\r\n",
-             (unsigned long)iteration,
-             (unsigned long)elapsed_ms,
-             (unsigned long)xPortGetFreeHeapSize(),
-             (unsigned long)xPortGetMinimumEverFreeHeapSize(),
-             (unsigned long)uxTaskGetStackHighWaterMark(NULL));
-      sprintf(line, "LFS stress %lu", (unsigned long)iteration);
-      BoardLcdShowLine(64U, line);
-    }
-
-    if (iteration >= LITTLEFS_STRESS_MAX_ITERATIONS)
-    {
-      uint32_t elapsed_ms = (uint32_t)((xTaskGetTickCount() - start_ticks) * portTICK_PERIOD_MS);
-
-      printf("littlefs stress: PASS iter=%lu elapsed=%lums heap_free=%lu heap_min=%lu stack_min=%lu\r\n",
-             (unsigned long)iteration,
-             (unsigned long)elapsed_ms,
-             (unsigned long)xPortGetFreeHeapSize(),
-             (unsigned long)xPortGetMinimumEverFreeHeapSize(),
-             (unsigned long)uxTaskGetStackHighWaterMark(NULL));
-      sprintf(line, "LFS PASS %lu", (unsigned long)iteration);
-      BoardLcdShowLine(64U, line);
-      break;
-    }
-
-    vTaskDelay(pdMS_TO_TICKS(10U));
-  }
-
-  while (1)
-  {
-    vTaskDelay(pdMS_TO_TICKS(1000U));
-  }
-}
-
-static int BoardLittleFsWriteVerify(lfs_t *fs, const char *path, uint32_t iteration)
-{
-  lfs_file_t file;
-  int err;
-
-  for (uint32_t i = 0U; i < LITTLEFS_STRESS_DATA_SIZE; i++)
-  {
-    s_lfs_stress_write[i] = (uint8_t)(iteration + (i * 31U) + (i >> 3));
-    s_lfs_stress_read[i] = 0U;
-  }
-
-  err = lfs_file_open(fs, &file, path, LFS_O_RDWR | LFS_O_CREAT | LFS_O_TRUNC);
-  if (err != LFS_ERR_OK)
-  {
-    return err;
-  }
-
-  err = (int)lfs_file_write(fs, &file, s_lfs_stress_write, LITTLEFS_STRESS_DATA_SIZE);
-  if (err == (int)LITTLEFS_STRESS_DATA_SIZE)
-  {
-    err = lfs_file_sync(fs, &file);
-  }
-  lfs_file_close(fs, &file);
-  if (err != LFS_ERR_OK)
-  {
-    return (err > 0) ? LFS_ERR_IO : err;
-  }
-
-  err = lfs_file_open(fs, &file, path, LFS_O_RDONLY);
-  if (err != LFS_ERR_OK)
-  {
-    return err;
-  }
-
-  err = (int)lfs_file_read(fs, &file, s_lfs_stress_read, LITTLEFS_STRESS_DATA_SIZE);
-  lfs_file_close(fs, &file);
-  if (err != (int)LITTLEFS_STRESS_DATA_SIZE)
-  {
-    return (err >= 0) ? LFS_ERR_IO : err;
-  }
-
-  if (memcmp(s_lfs_stress_read, s_lfs_stress_write, LITTLEFS_STRESS_DATA_SIZE) != 0)
-  {
-    return LFS_ERR_CORRUPT;
-  }
-
-  return LFS_ERR_OK;
-}
-#endif
 
 void vApplicationMallocFailedHook(void)
 {

@@ -7,10 +7,11 @@ extern "C" {
 
 #include "main.h"
 #include "lfs.h"
+#include "w25q_layout.h"
 
-#define LITTLEFS_FLASH_BASE_ADDR   (0x00100000UL)
+#define LITTLEFS_FLASH_BASE_ADDR   (W25Q_FLASH_BASE_ADDR + W25Q_FLASH_SIZE)
 #define LITTLEFS_FLASH_BLOCK_SIZE  (4096UL)
-#define LITTLEFS_FLASH_BLOCK_COUNT (256UL)
+#define LITTLEFS_FLASH_BLOCK_COUNT (0UL)
 #define LITTLEFS_FLASH_SIZE        (LITTLEFS_FLASH_BLOCK_SIZE * LITTLEFS_FLASH_BLOCK_COUNT)
 
 int LittleFs_FlashMount(uint8_t format_on_fail);

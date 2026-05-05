@@ -4,9 +4,33 @@
 
 comm_t *comm;
 
+#define UART_RX_BUFFER_SIZE 256U
+
+static volatile uint8_t uart_rx_buffer[UART_RX_BUFFER_SIZE];
+static volatile uint16_t uart_rx_head;
+static volatile uint16_t uart_rx_tail;
+
+static void uart_rx_push(uint8_t ch)
+{
+    uint16_t next = (uint16_t)((uart_rx_head + 1U) % UART_RX_BUFFER_SIZE);
+
+    if (next != uart_rx_tail) {
+        uart_rx_buffer[uart_rx_head] = ch;
+        uart_rx_head = next;
+    }
+}
+
 static int uart_rx_available(void)
 {
-    return ((USART1->ISR & USART_ISR_RXNE_RXFNE) != 0U) ? 1 : 0;
+    if ((USART1->ISR & (USART_ISR_ORE | USART_ISR_FE | USART_ISR_NE | USART_ISR_PE)) != 0U) {
+        USART1->ICR = USART_ICR_ORECF | USART_ICR_FECF | USART_ICR_NECF | USART_ICR_PECF;
+    }
+
+    if ((USART1->ISR & USART_ISR_RXNE_RXFNE) != 0U) {
+        uart_rx_push((uint8_t)USART1->RDR);
+    }
+
+    return (uart_rx_head != uart_rx_tail) ? 1 : 0;
 }
 
 static void uart_tx_putc(char c)
@@ -18,9 +42,14 @@ static void uart_tx_putc(char c)
 
 static char uart_rx_pop(void)
 {
+    uint8_t ch;
+
     while (uart_rx_available() == 0) {
     }
-    return (char)(uint8_t)USART1->RDR;
+
+    ch = uart_rx_buffer[uart_rx_tail];
+    uart_rx_tail = (uint16_t)((uart_rx_tail + 1U) % UART_RX_BUFFER_SIZE);
+    return (char)ch;
 }
 
 static void uart_putc(void *ctx, char c)
@@ -72,5 +101,9 @@ void comm_uart_irq_handler(void)
 {
     if ((USART1->ISR & (USART_ISR_ORE | USART_ISR_FE | USART_ISR_NE | USART_ISR_PE)) != 0U) {
         USART1->ICR = USART_ICR_ORECF | USART_ICR_FECF | USART_ICR_NECF | USART_ICR_PECF;
+    }
+
+    while ((USART1->ISR & USART_ISR_RXNE_RXFNE) != 0U) {
+        uart_rx_push((uint8_t)USART1->RDR);
     }
 }
