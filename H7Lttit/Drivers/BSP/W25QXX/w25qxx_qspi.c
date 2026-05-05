@@ -343,7 +343,7 @@ void W25qxx_Write(uint8_t* pBuffer, uint32_t WriteAddr, uint16_t NumByteToWrite)
 		}
 		if (i < secremain) //需要擦除
 		{
-			W25qxx_EraseSector(secpos); //擦除这个扇区
+			W25qxx_EraseSector(secpos * 4096); //擦除这个扇区
 			for (i = 0; i < secremain; i++) //复制
 			{
 				W25QXX_BUF[i + secoff] = pBuffer[i];

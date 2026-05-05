@@ -20,6 +20,7 @@
 # Keil user/local files
 *.uvguix.*
 *.uvoptx
+!H7Lttit/MDK-ARM/H7Lttit.uvoptx
 *.bak
 *.tmp
 
