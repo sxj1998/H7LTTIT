@@ -6,6 +6,7 @@
 #include "heap.h"
 #include "lcd.h"
 #include "littlefs_sd.h"
+#include "lv_port_lvgl.h"
 #include "quadspi.h"
 #include "rtc.h"
 #include "sdmmc.h"
@@ -41,9 +42,7 @@ static void StartStressTask(void *argument);
 #endif
 static void StartBoardPeripheralsTask(void *argument);
 static void BoardLcdShowLine(uint16_t y, const char *text);
-#if (ENABLE_SERIAL_SHELL == 0U)
 static void BoardLcdShowResources(void);
-#endif
 static void BoardFlashTest(void);
 static void BoardSdLittleFsTest(void);
 
@@ -410,6 +409,7 @@ static void StartBoardPeripheralsTask(void *argument)
 
   printf("board_io: lcd init\r\n");
   LCD_InitSimple();
+  LvPort_Init();
   BoardLcdShowLine(0U, "H7Lttit RTOS");
   BoardLcdShowLine(16U, "RNDIS running");
 
@@ -437,21 +437,21 @@ static void StartBoardPeripheralsTask(void *argument)
   {
     (void)line;
 #if (ENABLE_SERIAL_SHELL != 0U)
-    BoardLcdShowLine(80U, "UART shell COM3");
+    BoardLcdShowResources();
 #else
     BoardLcdShowResources();
 #endif
+    LvPort_Process();
     vTaskDelay(pdMS_TO_TICKS(1000U));
   }
 }
 
 static void BoardLcdShowLine(uint16_t y, const char *text)
 {
-  ST7735_LCD_Driver.FillRect(&st7735_pObj, 0, y, ST7735Ctx.Width, 16, BLACK);
-  LCD_ShowString(0, y, ST7735Ctx.Width, 16, 16, (uint8_t *)text);
+  LvPort_SetLine((uint32_t)(y / 16U), text);
+  LvPort_Process();
 }
 
-#if (ENABLE_SERIAL_SHELL == 0U)
 static void BoardLcdShowResources(void)
 {
 #ifdef W25Qxx
@@ -468,67 +468,21 @@ static void BoardLcdShowResources(void)
   const uint32_t ram_static = (uint32_t)Image$$RW_IRAM2$$Length;
   const uint32_t heap_free = (uint32_t)xPortGetFreeHeapSize();
   const uint32_t heap_used = (uint32_t)configTOTAL_HEAP_SIZE - heap_free;
-  uint32_t sd_total_kb = 0U;
-  uint32_t sd_used_kb = 0U;
   uint32_t sd_used_percent = 0U;
-  int sd_err = LFS_ERR_OK;
-  char line[32];
+  const uint32_t rom_percent = (flash_used * 100UL) / kCodeFlashSize;
+  const uint32_t ram_percent = ((ram_static + heap_used) * 100UL) / kAxiSramSize;
+  lfs_ssize_t used_blocks;
+  uint32_t total_blocks;
 
-  sprintf(line,
-          "Flash %lu/%luK %lu%%",
-          (unsigned long)((flash_used + 1023UL) / 1024UL),
-          (unsigned long)(kCodeFlashSize / 1024UL),
-          (unsigned long)((flash_used * 100UL) / kCodeFlashSize));
-  BoardLcdShowLine(0U, line);
-
-  sprintf(line,
-          "RAM %lu/%luK %lu%%",
-          (unsigned long)((ram_static + 1023UL) / 1024UL),
-          (unsigned long)(kAxiSramSize / 1024UL),
-          (unsigned long)((ram_static * 100UL) / kAxiSramSize));
-  BoardLcdShowLine(16U, line);
-
-  sprintf(line,
-          "Heap %lu/%luK %lu%%",
-          (unsigned long)((heap_used + 1023UL) / 1024UL),
-          (unsigned long)(configTOTAL_HEAP_SIZE / 1024UL),
-          (unsigned long)((heap_used * 100UL) / (uint32_t)configTOTAL_HEAP_SIZE));
-  BoardLcdShowLine(32U, line);
-
-  sd_err = LittleFs_SdMount(0U);
-  if (sd_err == LFS_ERR_OK)
+  used_blocks = lfs_fs_size(LittleFs_SdGetHandle());
+  total_blocks = LittleFs_SdGetBlockCount();
+  if ((used_blocks >= 0) && (total_blocks != 0U))
   {
-    lfs_ssize_t used_blocks = lfs_fs_size(LittleFs_SdGetHandle());
-    uint32_t total_blocks = LittleFs_SdGetBlockCount();
-
-    if ((used_blocks >= 0) && (total_blocks != 0U))
-    {
-      sd_total_kb = total_blocks / 2UL;
-      sd_used_kb = (uint32_t)used_blocks / 2UL;
-      sd_used_percent = ((uint32_t)used_blocks * 100UL) / total_blocks;
-    }
-    else
-    {
-      sd_err = (int)used_blocks;
-    }
-    LittleFs_SdUnmount();
+    sd_used_percent = ((uint32_t)used_blocks * 100UL) / total_blocks;
   }
 
-  if (sd_total_kb != 0U)
-  {
-    sprintf(line,
-            "SD %lu/%luM %lu%%",
-            (unsigned long)((sd_used_kb + 1023UL) / 1024UL),
-            (unsigned long)(sd_total_kb / 1024UL),
-            (unsigned long)sd_used_percent);
-  }
-  else
-  {
-    sprintf(line, "SD LFS E%d", sd_err);
-  }
-  BoardLcdShowLine(48U, line);
+  LvPort_SetResourceUsage(rom_percent, ram_percent, sd_used_percent);
 }
-#endif
 
 static void BoardFlashTest(void)
 {
